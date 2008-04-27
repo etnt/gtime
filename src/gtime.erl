@@ -15,6 +15,7 @@
 %% @type date()      = {year(), month(), day()}
 %% @type greg_secs() = integer()
 %% @type day_no()    = 1 | 2 | 3 | 4 | 5 | 6 | 7. Weekday, Monday == 1.
+%% @type format()    = date | xdate | time | days | date_time.
 %%
 %% xxx_format_msg/0 is used to return error messages about how the input
 %% string to xxx(...), should be formated, to be valid.
@@ -58,7 +59,6 @@
 	 plus/2,
 	 time/0,
 	 date/0,
-	 now/0,
 	 local_time/0,
 	 gnow/0,
 	 gdate/0,
@@ -274,22 +274,24 @@ datetime2gdate({YMD, Time}) ->
     calendar:datetime_to_gregorian_seconds({YMD, Time}).
 
 %%-----------------------------------------------------------------------------
-%% Function: gtostr(Secs)
-%%           gtostr(Secs, Format)
-%%           Secs   = greg_sec()
-%%           Format = date | xdate | time | days | date_time (default)
-%% Descrip.: print Secs
+%% @spec gtostr(Gsecs::greg_secs()) -> string()
+%% @doc Equivalent to <code>gtostr(Gsecs, date_time)</code>.
+%%-----------------------------------------------------------------------------
+gtostr(Secs) -> gtostr(Secs, date_time).
+
+%%-----------------------------------------------------------------------------
+%% @spec gtostr(Gsecs::greg_secs(), Format::format()) -> string()
+%% @doc Returns standard format string
+%% The returned formats look like this:
+%% <pre>
 %% Returns : date      -> "YYYY-MM-DD"
 %%           xdate     -> "YYYYMMDD"
 %%           time      -> "HH:MM:SS"
-%%           date_time -> "YYYY-MM-DD HH:MM:SS"
+%%           date_time -> "YYYY-MM-DD HH:MM:SS"  (default)
 %%           iso8106   -> "YYYYMMDDTHHMMSS"
+%% </pre>
 %% Note    : the YYYY part can be 1+ chars
 %%-----------------------------------------------------------------------------
-%% @doc Returns standard format string
-
-gtostr(Secs) -> gtostr(Secs, date_time).
-
 gtostr(undefined, _) -> "-";
 gtostr(Secs, date) ->
     {{Year, Month, Day}, _} = calendar:gregorian_seconds_to_datetime(Secs),
@@ -405,7 +407,7 @@ next_monday(Date) ->
 next_month({Y,M,_}) ->
     add_months_to_date2({Y,M,1}, 1).
 
-%% @spec one_month_from_today(date()) -> date()
+%% @spec one_month_from_today() -> date()
 %% @doc This function returns the date one month from today.
 %%      as a {Y,M,D} tuple.
 one_month_from_today() ->
