@@ -1,534 +1,488 @@
-%%% File    : gtime.erl
-%%% Description : 
-%%% Created : 18 Dec 2004 by  <klacke@hyber.org>
-
-%% @author klacke@hyber.org
-%% @doc Gregorian seconds time manipulation.
-%%
-%% @type seconds()   = integer()
-%% @type minutes()   = integer()
-%% @type hours()     = integer()
-%% @type day()       = integer()
-%% @type month()     = integer()
-%% @type year()      = integer()
-%% @type time()      = {hours(), minutes(), seconds()}
-%% @type date()      = {year(), month(), day()}
-%% @type greg_secs() = integer()
-%% @type day_no()    = 1 | 2 | 3 | 4 | 5 | 6 | 7. Weekday, Monday == 1.
-%% @type format()    = date | xdate | time | days | date_time.
-%%
-%% xxx_format_msg/0 is used to return error messages about how the input
-%% string to xxx(...), should be formated, to be valid.
-%%
-%% @type compact_date() = int(). 
-%% Is used to store a date() compactly, 1 RAM word instead of 
-%% 5 (2 + 3*1) as used by date() and 
-%% 3 used by gsec().
-%%
-%% example:
-%% date() = {1999,9,1} -> compact_date() = 19990901
-%% date() = {99,9,1}   -> compact_date() = 990901
-%%
-%% The external format uses 5 bytes (for compact date) rather than 
-%% 11 bytes = 2 (tuple) + 5 (year int) + 2*2 (small ints) for a date() and  
-%% 8 bytes  = 3 (fixed) + 5 (data part) for gsec()
-%% @end
-%%-----------------------------------------------------------------------------
-
+%%%-------------------------------------------------------------------
+%%% @doc A library for common time operations.
+%%%
+%%% Provides utility functions for working with Gregorian seconds,
+%%% timestamps, time zones, and datetime formatting.
+%%%
+%%% Key concepts:
+%%% <ul>
+%%%   <li>`gregorian_seconds()' - seconds since year 0 (as defined by
+%%%       the `calendar' module)</li>
+%%%   <li>`gus()' - a tuple `{GregorianSeconds, MicroSeconds}' suitable
+%%%       for precise time comparison using standard operators</li>
+%%%   <li>`yang_datetime()' - a 9-element tuple representing date, time,
+%%%       microseconds, and timezone offset (hours + minutes)</li>
+%%% </ul>
+%%% @end
+%%%-------------------------------------------------------------------
 -module(gtime).
 
-%%-----------------------------------------------------------------------------
-%% External exports
-%%-----------------------------------------------------------------------------
-
 -export([
-	 compact_date_to_date/1,
-	 date_to_compact_date/1,
-	 now_plus/1,
-	 days_diff/2,
-	 week_day/1,
-	 next_day/1,
-	 next_monday/1,
-	 next_month/1,
-	 end_of_day/1,
-	 end_of_month/1,
-	 yesterday/0,
-         day_before_yesterday/0,
-         today/0,
-	 tomorrow/0,
-	 plus/2,
-	 time/0,
-	 date/0,
-	 local_time/0,
-	 gnow/0,
-	 gdate/0,
-	 gsecs2gdate/1, gdate2date/1, date2gdate/1, datetime2gdate/1,
-	 gdate2year/1, gdate2month/1, gdate2day/1, gdate2datetime/1,
-	 gsecs2epochtime/1, epochtime2gsecs/1,
-	 gtostr/1,
-	 gtostr/2,
-	 strtog/1,
-	 daystr/1,
-	 day_of_week/1,
-	 add_days_to_date/2,
-	 sub_days_from_date/2,
-	 add_months_to_date/2,
-	 sub_months/2,
-	 days_in_month/1,
-	 strtodate/1,
-	 datetostr/1,
-	 date_time_to_str/1,
-	 day_to_str/1,
-         one_month_from_today/0
-	]).
+         calculate_local_time_zone/0,
+         calculate_time_zone/2,
+         date_to_gregorian_seconds/1,
+         datetime_to_string/1,
+         gregorian_seconds_to_date/1,
+         gregorian_seconds_to_datetime_string/1,
+         gregorian_seconds_to_datetime_string/2,
+         gregorian_seconds_to_time/1,
+         gus_ms_diff/2,
+         gus_now/0,
+         local_datetime_in_gregorian_seconds/0,
+         now_in_gregorian_seconds/0,
+         now_to_gregorian_seconds/1,
+         today_in_gregorian_seconds/0,
+         unit_to_now/2,
+         universal_seconds_to_local_seconds/1,
+         yang_datetime_to_gus/1,
+         yang_datetime_to_local_datetime/1,
+         yang_datetime_to_universal_datetime/1
+        ]).
 
-%%-----------------------------------------------------------------------------
-%% Include files
-%%-----------------------------------------------------------------------------
-
-%%-----------------------------------------------------------------------------
-%% Records
-%%-----------------------------------------------------------------------------
-
-%%-----------------------------------------------------------------------------
-%% Macros
-%%-----------------------------------------------------------------------------
-
-%%=============================================================================
-%% External functions
-%%=============================================================================
-
-%%-----------------------------------------------------------------------------
-%% @spec   compact_date_to_date(Comp::integer()) -> date()
-%% @doc    convert a date stored as a ...YMMDD int(), into date()
-%% @end------------------------------------------------------------------------
-compact_date_to_date(Comp) ->
-    Y = Comp div 10000, 
-    Comp2 = Comp - (Y * 10000),
-    M = Comp2 div 100,
-    Comp3 = Comp2 - (M * 100),
-    D = Comp3,
-    {Y,M,D}.
-
-%%-----------------------------------------------------------------------------
-%% @spec   date_to_compact_date({Y,M,D}) -> integer()
-%% @doc    convert date() -> to a ....YMMDD int() 
-%% @end------------------------------------------------------------------------
-date_to_compact_date({Y,M,D}) ->
-    (Y * 10000) + (M * 100) + D.
-
-%%-----------------------------------------------------------------------------
-%% @spec now_plus({Op::op(), {Amount::integer(), Type::type()}}) -> greg_secs()
-%%           op() = plus | minus
-%%           type() = seconds|minutes|hours|days
-%% @doc This function returns the time as gregorian_secs with
-%%           the Arg added to it.
-%% @end------------------------------------------------------------------------
-now_plus(Arg) ->
-    Now = calendar:datetime_to_gregorian_seconds(gtime:local_time()),
-    plus(Now, Arg).
-
-%%-----------------------------------------------------------------------------
-%% @spec days_diff(A::atime(), B::atime()) -> integer()
-%%           atime() = greg_secs() | date()
-%% @doc get A - B diff (in days).
-%% @end------------------------------------------------------------------------
-days_diff(A, B) when integer(A), integer(B) ->
-    DiffSecs = A - B,
-    DiffSecs div 86400;
-days_diff(A, B) when tuple(A), tuple(B) ->
-    days_diff(date2gdate(A), date2gdate(B)).
-    
-%%-----------------------------------------------------------------------------
-%% @spec week_day(Secs::greg_sec()) -> day_no()
-%% @doc
-%% @end------------------------------------------------------------------------
-week_day(Secs) ->
-    Gdate = gsecs2gdate(Secs),
-    calendar:day_of_the_week(gdate2date(Gdate)).
-
-%% @spec(date::date(), days::integer()) -> date()
-add_days_to_date(Date, Days) ->
-    gdate2date(plus(date2gdate(Date), {plus, {Days, days}})).
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
 
 
-%% @spec(date::date(), days::integer()) -> date()
-sub_days_from_date(Date, Days) ->
-    gdate2date(plus(date2gdate(Date), {minus, {Days, days}})).
+%%% types
+-type gregorian_seconds() :: non_neg_integer().
+-type micro_seconds() :: non_neg_integer().
+-type milli_seconds() :: non_neg_integer().
+-type centi_seconds() :: non_neg_integer().
+-type timezone() :: {integer(), integer()}.
+-type gus() :: {gregorian_seconds(), micro_seconds()}.
+-type yang_datetime() :: {Year::integer(), Month::integer(), Day::integer(),
+                          Hour::integer(), Min::integer(), Sec::integer(),
+                          Us::integer(),TzHour::integer(),TzMin::integer()}.
+-type datetime_string_format() :: date | xdate | time | time12 | time12ampm |
+                                  time24hm | date_time.
 
-%%-----------------------------------------------------------------------------
-%% Function: plus(Time, Arg)
-%%           Time = greg_sec()
-%%           Arg  = {plus|minus, {Int, seconds|minutes|hours|days}}
-%% Descrip.: This function returns Time with Arg added
-%% Returns : greg_sec()
-%%-----------------------------------------------------------------------------
-plus(Time, {Sign, Type}) ->
-    Add = case Type of
-	      {Int, seconds} ->
-		  Int;
-	      {Int, minutes} ->
-		  60 * Int;
-	      {Int, hours} ->
-		  60 * 60  * Int;
-	      {Int, days} ->
-		  60 * 60  * 24 * Int;
-	      {Int, years} -> 
-		  A = {Y, M, D} = gdate2date(Time),
-		  case Sign of
-		      plus ->
-			  B = {Y+Int, M, D},
-			  safe_date2gdate(B) - date2gdate(A);
-		      minus ->
-			  B = {Y-Int, M, D},
-			  date2gdate(A) - safe_date2gdate(B)
-		  end
-	  end,
-    case Sign of
-	plus ->  Time + Add;
-	minus -> Time - Add
-    end.
+-export_type([micro_seconds/0, milli_seconds/0, centi_seconds/0]).
 
-safe_date2gdate(Date) ->
-    date2gdate(adjust_month_day_overrun(Date)).
 
-%% @spec local_time() -> {date(), time()}
-%% @doc Returns virtual time.
-local_time() ->
-    calendar:gregorian_seconds_to_datetime(gnow()).
+%% @doc Convert Gregorian Seconds into a formatted string.
+%%
+%% Equivalent to: gregorian_seconds_to_datetime_string(Secs, date_time)
+%%
+%% @end
+gregorian_seconds_to_datetime_string(Secs) ->
+    gregorian_seconds_to_datetime_string(Secs, date_time).
 
-%% @spec time() -> {hours(), minutes(), seconds()}
-%% @doc Returns virtual time.
-time() ->
-    element(2, local_time()).
+%% @doc Convert Gregorian Seconds into a formatted string.
+%%
+%% The following formats is supported, resulting in a formatted
+%% string according to the examples shown below.
+%%
+%%         date: "2021-02-16"
+%%        xdate: "20210216"
+%%         time: "13:21:47"
+%%       time12: "01:21:47"
+%%   time12ampm: "01:21 PM"
+%%     time24hm: "13:21"
+%%    date_time: "2021-02-16 13:21:47"
+%%
+%% @end
+-spec gregorian_seconds_to_datetime_string(Seconds, Format) -> string() when
+      Seconds :: gregorian_seconds(),
+      Format :: datetime_string_format().
 
-%% @doc Returns virtual date.
-date() ->
-    element(1, local_time()).
+gregorian_seconds_to_datetime_string(Secs, date) ->
+    {{Y, M, D}, _} = calendar:gregorian_seconds_to_datetime(Secs),
+    lists:flatten(io_lib:format("~w-~2.2.0w-~2.2.0w", [Y, M, D]));
+%%
+gregorian_seconds_to_datetime_string(Secs, xdate) ->
+    {{Y, M, D}, _} = calendar:gregorian_seconds_to_datetime(Secs),
+    lists:flatten(io_lib:format("~w~2.2.0w~2.2.0w", [Y, M, D]));
+%%
+gregorian_seconds_to_datetime_string(Secs, time) ->
+    {_, {H, M, S}} = calendar:gregorian_seconds_to_datetime(Secs),
+    lists:flatten(io_lib:format("~2.2.0w:~2.2.0w:~2.2.0w", [H, M, S]));
+%%
+gregorian_seconds_to_datetime_string(Secs, time12) ->
+    {_, {H, M, S}} = calendar:gregorian_seconds_to_datetime(Secs),
+    H12 = if H > 12 -> H - 12;
+                true -> H
+             end,
+    lists:flatten(io_lib:format("~2.2.0w:~2.2.0w:~2.2.0w", [H12, M, S]));
+%%
+gregorian_seconds_to_datetime_string(Secs, time12ampm) ->
+    {_, {H, M, _S}} = calendar:gregorian_seconds_to_datetime(Secs),
+    {H12, AmPm} = if H > 12 -> {H - 12, 'PM'};
+                     true -> {H, 'AM'}
+                  end,
+    lists:flatten(io_lib:format("~2.2.0w:~2.2.0w ~s",
+                                [H12, M, AmPm]));
+%%
+gregorian_seconds_to_datetime_string(Secs, time24hm) ->
+    {_, {H, M, _S}} = calendar:gregorian_seconds_to_datetime(Secs),
+    lists:flatten(io_lib:format("~2.2.0w:~2.2.0w", [H, M]));
+%%
+gregorian_seconds_to_datetime_string(Secs, date_time) ->
+    {{Year, Month, Day}, {Hour, Minute, Second}} =
+        calendar:gregorian_seconds_to_datetime(Secs),
+    lists:flatten(io_lib:format("~w-~2.2.0w-~2.2.0w ~2.2.0w:~2.2.0w:~2.2.0w",
+                                [Year, Month, Day, Hour, Minute, Second])).
 
-%%-----------------------------------------------------------------------------
-%% Function: gnow()  - local current time
-%%           gdate() - local current date()
-%% Descrip.: 
-%% Returns : greg_sec()
-%%-----------------------------------------------------------------------------
-%% @doc Return gregorian seconds as of now()
+-ifdef(EUNIT).
+gregorian_seconds_to_datetime_string_test_() ->
+    Gsecs = calendar:datetime_to_gregorian_seconds({{2021,2,16},
+                                                    {13,21,47}}),
+    [?_assertMatch("2021-02-16",
+                   gregorian_seconds_to_datetime_string(Gsecs, date))
+     ,?_assertMatch("20210216",
+                    gregorian_seconds_to_datetime_string(Gsecs, xdate))
+     ,?_assertMatch("13:21:47",
+                    gregorian_seconds_to_datetime_string(Gsecs, time))
+     ,?_assertMatch("01:21:47",
+                    gregorian_seconds_to_datetime_string(Gsecs, time12))
+     ,?_assertMatch("01:21 PM",
+                    gregorian_seconds_to_datetime_string(Gsecs, time12ampm))
+     ,?_assertMatch("13:21",
+                    gregorian_seconds_to_datetime_string(Gsecs, time24hm))
+     ,?_assertMatch("2021-02-16 13:21:47",
+                    gregorian_seconds_to_datetime_string(Gsecs, date_time))
+    ].
 
-gnow() ->
-    calendar:datetime_to_gregorian_seconds(calendar:local_time()).
+-endif.
 
-gdate() -> calendar:datetime_to_gregorian_seconds({gtime:date(), {0,0,0}}).
+%% @doc Return Today in Gregorian Seconds.
+%%
+%% Note that 'erlang:date/0' returns the date in the current local time zone.
+%%
+%% @end
+-spec today_in_gregorian_seconds() -> gregorian_seconds().
 
-%%-----------------------------------------------------------------------------
-%% Function: 
-%% Descrip.: strip non-date seconds (hh-mm-ss) from greg_sec()
-%% Returns : 
-%%-----------------------------------------------------------------------------
-gsecs2gdate(Secs) ->
-    date2gdate(gdate2date(Secs)).
+today_in_gregorian_seconds() ->
+    date_to_gregorian_seconds(date()).
 
-%%-----------------------------------------------------------------------------
-%% Function: 
-%% Descrip.: greg_sec() -> date()
-%% Returns : 
-%%-----------------------------------------------------------------------------
-gdate2date(Secs) ->
-    {YMD, _} = calendar:gregorian_seconds_to_datetime(Secs),
-    YMD.
 
-gdate2datetime(Secs) ->
-    calendar:gregorian_seconds_to_datetime(Secs).
+%% @doc Convert given Date to Gregorian Seconds.
+-spec date_to_gregorian_seconds(YMD) -> gregorian_seconds() when
+      YMD :: calendar:date().
 
-gdate2year(Secs) ->
-    {{Y, _M, _D}, _} = calendar:gregorian_seconds_to_datetime(Secs),
-    Y.
-
-gdate2month(Secs) ->
-    {{_Y, M, _D}, _} = calendar:gregorian_seconds_to_datetime(Secs),
-    M.
-
-gdate2day(Secs) ->
-    {{_Y, _M, D}, _} = calendar:gregorian_seconds_to_datetime(Secs),
-    D.
-
-gsecs2epochtime(Secs) ->
-    Secs - 719528 * 86400. %% Numbers from documentation for calendar
-
-epochtime2gsecs(Secs) ->
-    Secs + 719528 * 86400. %% Numbers from documentation for calendar
-
-%%-----------------------------------------------------------------------------
-%% Function: 
-%% Descrip.: date() -> greg_sec() (use 00:00:00 for hh:mm:ss)
-%% Returns : 
-%%-----------------------------------------------------------------------------
-date2gdate(YMD) ->
+date_to_gregorian_seconds({_,_,_} = YMD)  ->
     calendar:datetime_to_gregorian_seconds({YMD, {0,0,0}}).
 
-%%-----------------------------------------------------------------------------
-%% Function: 
-%% Descrip.: {date(),time()} -> greg_sec()
-%% Returns : 
-%%-----------------------------------------------------------------------------
-datetime2gdate({YMD, Time}) ->
-    calendar:datetime_to_gregorian_seconds({YMD, Time}).
 
-%%-----------------------------------------------------------------------------
-%% @spec gtostr(Gsecs::greg_secs()) -> string()
-%% @doc Equivalent to <code>gtostr(Gsecs, date_time)</code>.
-%%-----------------------------------------------------------------------------
-gtostr(Secs) -> gtostr(Secs, date_time).
+%% @doc Convert Gregorian Seconds to a Date.
+-spec gregorian_seconds_to_date(Seconds) -> calendar:date() when
+      Seconds :: gregorian_seconds().
 
-%%-----------------------------------------------------------------------------
-%% @spec gtostr(Gsecs::greg_secs(), Format::format()) -> string()
-%% @doc Returns standard format string
-%% The returned formats look like this:
-%% <pre>
-%% Returns : date      -> "YYYY-MM-DD"
-%%           xdate     -> "YYYYMMDD"
-%%           time      -> "HH:MM:SS"
-%%           date_time -> "YYYY-MM-DD HH:MM:SS"  (default)
-%%           iso8106   -> "YYYYMMDDTHHMMSS"
-%% </pre>
-%% Note    : the YYYY part can be 1+ chars
-%%-----------------------------------------------------------------------------
-gtostr(undefined, _) -> "-";
-gtostr(Secs, date) ->
-    {{Year, Month, Day}, _} = calendar:gregorian_seconds_to_datetime(Secs),
-    lists:flatten(io_lib:format("~w-~2.2.0w-~2.2.0w", [Year, Month, Day]));
-gtostr(Secs, xdate) ->
-    {{Year, Month, Day}, _} = calendar:gregorian_seconds_to_datetime(Secs),
-    lists:flatten(io_lib:format("~w~2.2.0w~2.2.0w", [Year, Month, Day]));
-gtostr(Secs, xdatex) ->
-    {{Year, Month, Day}, _} = calendar:gregorian_seconds_to_datetime(Secs),
-    Year2 = Year rem 1000,
-    lists:flatten(io_lib:format("~2.2.0w~2.2.0w~2.2.0w", [Year2, Month, Day]));
-gtostr(Secs, days) ->
-    {{Year, Month, Day}, _} = calendar:gregorian_seconds_to_datetime(Secs),
-    lists:flatten(io_lib:format("~w", [calendar:date_to_gregorian_days(
-					 Year, Month, Day)]));
-gtostr(Secs, time) ->
-    {_, {Hour, Minute, Second}} = calendar:gregorian_seconds_to_datetime(Secs),
-    lists:flatten(io_lib:format("~2.2.0w:~2.2.0w:~2.2.0w",
-				[Hour, Minute, Second]));
-gtostr(Secs, date_time) ->
-    {{Year, Month, Day}, {Hour, Minute, Second}} =
-	calendar:gregorian_seconds_to_datetime(Secs),
-    lists:flatten(io_lib:format("~w-~2.2.0w-~2.2.0w ~2.2.0w:~2.2.0w:~2.2.0w",
-				[Year, Month, Day, Hour, Minute, Second]));
-gtostr(Secs, iso8601) ->
-    {{Year, Month, Day}, {Hour, Minute, Second}} =
-	calendar:gregorian_seconds_to_datetime(Secs),
-    lists:flatten(io_lib:format("~w~2.2.0w~2.2.0wT~2.2.0w~2.2.0w~2.2.0w",
-				[Year, Month, Day, Hour, Minute, Second])).
-
-%%-----------------------------------------------------------------------------
-%% Function: strtog(Date)
-%%           Date = string() on the "YYYY-MM-DD" | "YYYY-MM-DD HH:MM:DD" format
-%%                  note: H,M,D have no size limit so either one or two chars
-%%                        will work (if the num is < 10)
-%% Descrip.: convert a date string to gregorian seconds
-%% Returns : greg_sec() | error
-%%-----------------------------------------------------------------------------
-strtog(Date) ->
-    case catch io_lib:fread("~4d-~2d-~2d", Date) of
-	{ok, [Year, Month, Day], []} ->
-	    DateTime = {{Year, Month, Day}, {0, 0, 0}},
-	    case catch calendar:datetime_to_gregorian_seconds(DateTime) of
-		{'EXIT', _} -> error;
-		Secs ->	{ok, Secs}
-	    end;
-	_ ->
-	    case catch io_lib:fread("~4d-~2d-~2d ~d:~d:~d", Date) of
-		{ok, [Year, Month, Day, Hours,Minutes,Seconds], []} ->
-		    DateTime = {{Year, Month, Day}, {Hours, Minutes, Seconds}},
-		    case catch calendar:datetime_to_gregorian_seconds(
-				 DateTime) of
-			{'EXIT', _} -> error;
-			Secs ->	{ok, Secs}
-		    end;
-		_ ->
-		    error
-	    end
-    end.
-
-%%-----------------------------------------------------------------------------
-%% @spec tomorrow() -> greg_secs()
-%% @doc This function returns the date of tomorrow as gregorian_secs
-%% @end------------------------------------------------------------------------
-tomorrow() ->
-    plus(gdate(), {plus, {1, days}}).
-
-%%-----------------------------------------------------------------------------
-%% @spec yesterday() -> greg_secs()
-%% @doc This function returns the date of yesterday as gregorian_secs
-%% @end------------------------------------------------------------------------
-yesterday() ->
-    plus(gdate(), {minus, {1, days}}).
-
-day_before_yesterday() ->
-    plus(gdate(), {minus, {2, days}}).
-
-%%-----------------------------------------------------------------------------
-%% @spec today() -> greg_secs()
-%% @doc This function returns the date of today, i.e the same as: gtime:gdate()
-%% @end------------------------------------------------------------------------
-today() ->
-    gdate().
-
-%%-----------------------------------------------------------------------------
-%% @spec next_day(GDate::greg_secs()) -> greg_secs()
-%% @doc This function returns the date of next day as gregorian_secs
-%% @end------------------------------------------------------------------------
-next_day(GDate) ->
-    plus(GDate, {plus, {1, days}}).
+gregorian_seconds_to_date(Seconds)  ->
+    {YMD, _} = calendar:gregorian_seconds_to_datetime(Seconds),
+    YMD.
 
 
-day_of_week(GDate) ->
-    calendar:day_of_the_week(gdate2date(GDate)).
+%% @doc Convert Gregorian Seconds to a Time.
+-spec gregorian_seconds_to_time(Seconds) -> calendar:time() when
+      Seconds :: gregorian_seconds().
 
-daystr(1) -> "Monday";
-daystr(2) -> "Tuesday";
-daystr(3) -> "Wednesday";
-daystr(4) -> "Thursday";
-daystr(5) -> "Friday";
-daystr(6) -> "Saturday";
-daystr(7) -> "Sunday".
-
-%% @spec next_monday(date()) -> date()
-%% @doc This function returns the date of next Monday as a {Y,M,D} tuple.
-next_monday(Date) ->
-    Days = 8 - calendar:day_of_the_week(Date),
-    add_days_to_date(Date, Days).
-	    
-%% @spec next_month(date()) -> date()
-%% @doc This function returns the date of first of the next month
-%%      as a {Y,M,D} tuple.
-next_month({Y,M,_}) ->
-    add_months_to_date2({Y,M,1}, 1).
-
-%% @spec one_month_from_today() -> date()
-%% @doc This function returns the date one month from today.
-%%      as a {Y,M,D} tuple.
-one_month_from_today() ->
-    add_months_to_date2(gtime:date(), 1).
+gregorian_seconds_to_time(Seconds)  ->
+    {_, HMS} = calendar:gregorian_seconds_to_datetime(Seconds),
+    HMS.
 
 
-%% @spec end_of_day(GDate::greg_secs()) -> greg_secs()
-%% @doc This function returns the Greg.Secs of the end of day,
-%%      for the given input, as Greg.Secs.
-end_of_day(GTime) ->
-    next_day(date2gdate(gdate2date(GTime))) - 1.
+%% @doc Return Local DateTime to Gregorian Seconds
+-spec local_datetime_in_gregorian_seconds() -> gregorian_seconds().
 
-%% @spec end_of_month(GDate::greg_secs()) -> greg_secs()
-%% @doc This function returns the Greg.Secs of the end of month,
-%%      for the given input, as Greg.Secs.
-end_of_month(GTime) ->
-    date2gdate(next_month(gdate2date(GTime))) - 1.
-
-%%-----------------------------------------------------------------------------
-%% @spec add_months_to_date(Date::date(), Months::interger()) -> date()
-%% @doc  increment Date by Month months (Month >= 0)
-%% @end------------------------------------------------------------------------
-add_months_to_date(Date, Months) when Months >= 0 ->
-    Date2 = add_months_to_date2(Date, Months),
-    adjust_month_day_overrun(Date2).
-
-add_months_to_date2({Y,M,D}, Months) when Months >= 0 ->
-    if
-	M + Months > 12 ->
-	    add_months_to_date2({Y+1,1,D}, Months - (12 - M) -1);
-	true ->
-	    {Y,M+Months,D}
-    end.
-
-adjust_month_day_overrun({Y,M,_D} = Date) ->
-    case calendar:valid_date(Date) of
-	true -> Date;
-	%% D > last day of month, move to next month
-	false -> 
-	    if M /= 12 ->
-		    {Y,M+1,1};
-	       M == 12 ->
-		    {Y+1,1,1}
-	    end
-    end.
-
-%%-----------------------------------------------------------------------------
-%% @spec sub_months(Date::date(), Months::integer()) -> date()
-%% @doc  subtract Month months from Date. Note that the last day of the new
-%%       month is used as day date, if the orginal dates day is not availible
-%%       e.g. 2005-3-31 - 1 month -> 2005-2-28
-%% @end------------------------------------------------------------------------
-sub_months({Y,M,D}, Months) when Months >= 0 ->
-    SubMonths = Months rem 12,
-    SubYears = Months div 12,
-    
-    Y1 = Y - SubYears,
-    M1 = M - SubMonths,
-    %% check if SubMonths move into the previous year (M1 = 0 or negativ)
-    {Y2, M2} = case M1 < 1 of
-		   true -> {Y1 - 1, 12 + M1};
-		   false -> {Y1, M1}
-	       end,
-    
-    NewDate = {Y2,M2,D},
-    case calendar:valid_date(NewDate) of
-	true -> 
-	    NewDate;
-	false ->
-	    {NewY, NewM, _} = NewDate,
-	    NewDay = calendar:last_day_of_the_month(NewY, NewM),
-	    {NewY, NewM, NewDay}
-    end.
-	 
-%%-----------------------------------------------------------------------------
-    
-%% This function is used for checking if it is ok to
-%% use M/D as a valid recurring date. (i.e. 2/29 is not ok.)
-days_in_month(1)  -> 31;
-days_in_month(2)  -> 28;
-days_in_month(3)  -> 31;
-days_in_month(4)  -> 30;
-days_in_month(5)  -> 31;
-days_in_month(6)  -> 30;
-days_in_month(7)  -> 31;
-days_in_month(8)  -> 31;
-days_in_month(9)  -> 30;
-days_in_month(10) -> 31;
-days_in_month(11) -> 30;
-days_in_month(12) -> 31.
+local_datetime_in_gregorian_seconds()  ->
+    calendar:datetime_to_gregorian_seconds(calendar:local_time()).
 
 
-%%-----------------------------------------------------------------------------
+%% @doc (Universal) Now in Gregorian Seconds.
+-spec now_in_gregorian_seconds() -> gregorian_seconds().
 
-%% convert date string() of numbers to date(), where the number are
-%% separated by ":" or "-" e.g. "1999-04-23" -> {1999,4,23}
-strtodate(S) ->
-    [Y,M,D] = lists:map(fun(X) -> list_to_integer(X) end, 
-			string:tokens(S, "-:")),
-    true = calendar:valid_date(Ret = {Y,M,D}),
-    Ret.
+now_in_gregorian_seconds() ->
+    calendar:datetime_to_gregorian_seconds(calendar:universal_time()).
+
+%% @doc Convert (Universal) Now into Gregorian Seconds.
+-spec now_to_gregorian_seconds(Now) -> gregorian_seconds() when
+      Now :: erlang:timestamp().
+
+now_to_gregorian_seconds(Now) ->
+    calendar:datetime_to_gregorian_seconds(calendar:now_to_universal_time(Now)).
 
 
-%% XXX types:date2str does this with proper 0 padding 
-%%     should this be replaced/removed ???
-datetostr({Y,M,D}) ->
-    io_lib:format("~w-~w-~w", [Y,M,D]).
-    
-				      
-date_time_to_str({Date, Time}) ->
-    {{Year, Month, Day}, {Hour, Minute, Second}} = {Date, Time},
+%% @doc Convert Universal Seconds into Local Seconds.
+-spec universal_seconds_to_local_seconds(Seconds) -> gregorian_seconds() when
+      Seconds :: gregorian_seconds().
+
+universal_seconds_to_local_seconds(USecs) ->
+    UniversalDateTime = calendar:gregorian_seconds_to_datetime(USecs),
+    LocalDateTime = calendar:universal_time_to_local_time(UniversalDateTime),
+    calendar:datetime_to_gregorian_seconds(LocalDateTime).
+
+
+
+%% @doc Format a DateTime tuple into a string.
+-spec datetime_to_string(DateTime) -> string() when
+      DateTime :: calendar:datetime().
+
+datetime_to_string({{Year, Month, Day}, {Hour, Minute, Second}}) ->
      lists:flatten(io_lib:format("~w-~2.2.0w-~2.2.0w ~2.2.0w:~2.2.0w:~2.2.0w",
-				 [Year, Month, Day, Hour, Minute, Second])).
+                                 [Year, Month, Day, Hour, Minute, Second])).
 
-day_to_str(Day) ->
-    DStr = integer_to_list(Day),
-    case [lists:last(DStr)] of
-	D when D == "1";
-	       D == "2" ->
-	    DStr ++ ":a";
-	_ ->
-	    DStr ++ ":e"
+
+%% @doc Convert the 'yang:date-and-time' into Local 'yang:date-and-time'.
+-spec yang_datetime_to_local_datetime(DateTime) -> yang_datetime() when
+      DateTime :: yang_datetime().
+
+yang_datetime_to_local_datetime({Year, Month, Day, Hour, Min,
+                                 Sec, Us, TzHour, TzMin}) ->
+    Tsecs = calendar:datetime_to_gregorian_seconds({{Year, Month, Day},
+                                                    {Hour, Min, Sec}}),
+
+    Usecs = subtract_time_zone_from_seconds(Tsecs, TzHour, TzMin),
+    Lsecs = universal_to_local(Usecs),
+    Offset = Lsecs - Usecs,
+    OffMins = Offset div 60,
+    TzHour1 = OffMins div 60,
+    TzMin1 = OffMins rem 60,
+    {{Year1, Month1, Day1}, {Hour1, Min1, Sec1}} =
+        calendar:gregorian_seconds_to_datetime(Lsecs),
+    {Year1, Month1, Day1, Hour1, Min1, Sec1, Us, TzHour1, TzMin1}.
+
+universal_to_local(UnivGregSecs) ->
+    DTime = calendar:gregorian_seconds_to_datetime(UnivGregSecs),
+    LDtime = calendar:universal_time_to_local_time(DTime),
+    calendar:datetime_to_gregorian_seconds(LDtime).
+
+
+%% @doc Convert the 'yang:date-and-time' into Universal 'yang:date-and-time'.
+-spec yang_datetime_to_universal_datetime(DateTime) -> yang_datetime() when
+      DateTime :: yang_datetime().
+
+yang_datetime_to_universal_datetime({Year, Month, Day, Hour, Min,
+                                     Sec, Us, TzHour, TzMin}) ->
+    Tsecs = calendar:datetime_to_gregorian_seconds({{Year, Month, Day},
+                                                    {Hour, Min, Sec}}),
+    Usecs = subtract_time_zone_from_seconds(Tsecs, TzHour, TzMin),
+    {{Year1, Month1, Day1}, {Hour1, Min1, Sec1}} =
+        calendar:gregorian_seconds_to_datetime(Usecs),
+    {Year1, Month1, Day1, Hour1, Min1, Sec1, Us, 0, 0}.
+
+
+%% @doc Return (Universal) Now as a GUS tuple {UniversalGregorianSecs,MicroSecs}
+%%
+%% Good function to use when comparing time, as time
+%% is expressed in a format that can use the comparison
+%% operators '<', '>', '==', '=<', '>='.
+%%
+%% @end
+-spec gus_now() -> gus().
+
+gus_now() ->
+    Now = erlang:timestamp(),
+    {_MSec, _Sec, Us} = Now,
+    {calendar:datetime_to_gregorian_seconds(
+       calendar:now_to_universal_time(Now)), Us}.
+
+
+%% @doc Return the difference between two Gus values, in milliseconds.
+-spec gus_ms_diff(Gus1, Gus2) -> integer() when
+      Gus1 :: gus(),
+      Gus2 :: gus().
+
+gus_ms_diff({GSecs, Us}, {GSecs2, Us2}) ->
+    trunc((GSecs2-GSecs)*1000+(Us2-Us)/1000).
+
+
+%% @doc Convert YANG-DATETIME to a GUS tuple: {UniversalGregorianSecs,MicroSecs}
+-spec yang_datetime_to_gus(DateTime) -> gus() when
+      DateTime :: yang_datetime().
+
+yang_datetime_to_gus({Year,Month,Day,Hour,Min,Sec,Us,TzHour0,TzMin}) ->
+    TzHour = if is_integer(TzHour0) -> TzHour0;
+                true                -> 0
+             end,
+    TSecs = calendar:datetime_to_gregorian_seconds({{Year, Month, Day},
+                                                    {Hour, Min, Sec}}),
+    GSecs = subtract_time_zone_from_seconds(TSecs, TzHour, TzMin),
+    {GSecs, Us}.
+
+
+-ifdef(EUNIT).
+yang_datetime_to_gus_test_() ->
+    LDT = {2021,3,1,0,35,0,Us=10,1,0},
+    UGS = calendar:datetime_to_gregorian_seconds({{2021,2,28},{23,35,0}}),
+
+    %% Marquesas Islands
+    LDT2 = {2021,2,28,23,21,21,Us2=10,-9,30},
+    UGS2 = calendar:datetime_to_gregorian_seconds({{2021,3,1},{8,51,21}}),
+
+    %% Chatham Islands
+    LDT3 = {2021,3,1,12,59,21,Us3=10,13,45},
+    UGS3 = calendar:datetime_to_gregorian_seconds({{2021,2,28},{23,14,21}}),
+
+    [?_assertMatch({UGS, Us}, yang_datetime_to_gus(LDT))
+     ,?_assertMatch({UGS2,Us2}, yang_datetime_to_gus(LDT2))
+     ,?_assertMatch({UGS3,Us3}, yang_datetime_to_gus(LDT3))
+    ].
+-endif.
+
+
+%% @doc Return unit milliseconds or microseconds to now.
+%%
+%%
+%% @end
+-spec unit_to_now(Unit, non_neg_integer()) -> erlang:timestamp() when
+      Unit :: atom().
+
+unit_to_now(millisecond, TimeMs) ->
+    %% millisecond type is taken from erlang:time_unit()
+    SecondsTmp = TimeMs div 1000,
+    MegaSeconds = SecondsTmp div 1000000,
+    Seconds = SecondsTmp - MegaSeconds * 1000000,
+    MicroSeconds = 1000 * (TimeMs - SecondsTmp * 1000),
+    {MegaSeconds, Seconds, MicroSeconds};
+unit_to_now(microsecond, TimeUs) ->
+    MegaSeconds  = TimeUs div 1000000000000,
+    Seconds      = TimeUs div 1000000 - MegaSeconds * 1000000,
+    MicroSeconds = TimeUs rem 1000000,
+    {MegaSeconds, Seconds, MicroSeconds}.
+
+
+%% @doc Calculate the current local Time Zone.
+-spec calculate_local_time_zone() -> timezone().
+
+calculate_local_time_zone() ->
+    Now = erlang:timestamp(),
+    calculate_time_zone(Now).
+
+
+%% @doc Calculate the local Time Zone based on the (Universal) Now value.
+-spec calculate_time_zone(Now) -> timezone() when
+      Now :: erlang:timestamp().
+
+calculate_time_zone(Now) ->
+    LDT = calendar:now_to_local_time(Now),
+    UDT = calendar:now_to_universal_time(Now),
+    calculate_time_zone(LDT, UDT).
+
+
+%% @doc
+%% We transform the Local and Universal DateTime to Gregorian seconds and
+%% then calculate the difference in Hours and Minutes which constitutes
+%% the TimeZone. This way we avoid borderline problems between Days,
+%% Months and Years.
+%%
+%% Note: We compute the difference counted in 15 minutes intervals.
+%% We also add/subtract '450' (60*15/2) to the calculation in order
+%% to compensate for any rounding off error if the Local Time should
+%% be out of sync. The accuracy is in 15 minutes intervals which is
+%% the minimum time zone difference that may exist in the World.
+%%
+%% Note: Times behind UTC, e.g 'UTC-9:30h' is represented as: {-9,30}
+%%                             'UTC-0:30h' is represented as: {0,-30}
+%%
+%% Example: Cocos Islands
+%%
+%% {6,30} = calculate_time_zone({{2021,1,28},{19,32,12}},
+%%                              {{2021,1,28},{13,02,12}}).
+%%
+%% See the EUnit tests for more examples!
+%%
+%% @end
+-spec calculate_time_zone(LocalDateTime,
+                          UniversalDateTime) -> timezone() when
+      LocalDateTime :: calendar:datetime(),
+      UniversalDateTime :: calendar:datetime().
+
+calculate_time_zone(LocalDateTime, UniversalDateTime) ->
+    LocalGsec = calendar:datetime_to_gregorian_seconds(LocalDateTime),
+    UniversalGsec = calendar:datetime_to_gregorian_seconds(UniversalDateTime),
+
+    QuarterMinutes =
+        if LocalGsec >= UniversalGsec ->
+                (LocalGsec - UniversalGsec + 450) div (60*15);
+           true ->
+                (LocalGsec - UniversalGsec - 450) div (60*15)
+        end,
+
+    Hours = QuarterMinutes div 4,
+    Minutes = (QuarterMinutes  rem 4) * 15,
+
+    handle_neg_minutes(Hours, Minutes).
+
+
+%% If Hours is Zero then keep the sign of the Minutes.
+%% Else, only keep the sign of the Hours.
+handle_neg_minutes(0 = Hours, Minutes) ->
+    {Hours, Minutes};
+handle_neg_minutes(Hours, Minutes) ->
+    {Hours, abs(Minutes)}.
+
+subtract_time_zone_from_seconds(Tsecs, TzHour, TzMin) ->
+    if TzHour < 0 ->
+            Tsecs - (TzHour*3600 + (-TzMin)*60);
+       true ->
+            Tsecs - (TzHour*3600 + TzMin*60)
     end.
 
+
+-ifdef(EUNIT).
+
+cocos_island_time_zone_test_() ->
+    [?_assertMatch({6,30},
+                   calculate_time_zone({{2021,1,28},{19,32,12}},
+                                       {{2021,1,28},{13,02,12}})),
+     %% different days
+     ?_assertMatch({6,30},
+                   calculate_time_zone({{2021,1,26},{1,32,12}},
+                                       {{2021,1,25},{19,02,12}})),
+     %% different days + 1 minute diff
+     ?_assertMatch({6,30},
+                   calculate_time_zone({{2021,1,26},{1,33,12}},
+                                       {{2021,1,25},{19,02,12}}))
+    ].
+
+chatham_island_time_zone_test_() ->
+    [?_assertMatch({13,45},
+                   calculate_time_zone({{2021,1,29},{2,51,51}},
+                                       {{2021,1,28},{13,06,51}})),
+     %% 1 minute diff
+     ?_assertMatch({13,45},
+                   calculate_time_zone({{2021,1,29},{2,52,51}},
+                                       {{2021,1,28},{13,06,51}})),
+     ?_assertMatch({13,45},
+                   calculate_time_zone({{2021,1,29},{2,51,51}},
+                                       {{2021,1,28},{13,07,51}})),
+     %% 2 minute diff
+     ?_assertMatch({13,45},
+                   calculate_time_zone({{2021,1,29},{2,53,51}},
+                                       {{2021,1,28},{13,06,51}})),
+     ?_assertMatch({13,45},
+                   calculate_time_zone({{2021,1,29},{2,51,51}},
+                                       {{2021,1,28},{13,08,51}}))
+     ].
+
+marquesas_islands_time_zone_test_() ->
+    [?_assertMatch({-9,30},
+                   calculate_time_zone({{2021,1,28},{5,21,51}},
+                                       {{2021,1,28},{14,51,51}})),
+     ?_assertMatch({-9,30},
+                   calculate_time_zone({{2021,2,28},{23,21,51}},
+                                       {{2021,3,1}, {8,51,51}}))
+    ].
+
+newfoundland_time_zone_test_() ->
+    [?_assertMatch({-3,30},
+                   calculate_time_zone({{2021,1,25},{12,17,08}},
+                                       {{2021,1,25},{15,47,08}})),
+     %% different days
+     ?_assertMatch({-3,30},
+                   calculate_time_zone({{2021,1,24},{23,17,08}},
+                                       {{2021,1,25},{2,47,08}}))
+    ].
+
+kiribati_line_islands_time_zone_test_() ->
+    [?_assertMatch({14,0},
+                   calculate_time_zone({{2021,2,1},{23,55,23}},
+                                       {{2021,2,1},{9,55,23}})),
+     %% different days
+     ?_assertMatch({14,0},
+                   calculate_time_zone({{2021,2,2},{0,0,7}},
+                                       {{2021,2,1},{10,0,7}}))
+    ].
+
+-endif.
