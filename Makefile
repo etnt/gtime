@@ -7,7 +7,7 @@ EBINDIR = ebin
 SOURCES = $(wildcard $(SRCDIR)/*.erl)
 BEAMS = $(patsubst $(SRCDIR)/%.erl,$(EBINDIR)/%.beam,$(SOURCES))
 
-.PHONY: all clean test
+.PHONY: all clean test docs
 
 all: $(EBINDIR) $(BEAMS)
 
@@ -23,3 +23,6 @@ test: clean all
 
 clean:
 	rm -f $(EBINDIR)/*.beam
+
+docs:
+	rebar3 ex_doc

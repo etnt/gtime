@@ -1,0 +1,10 @@
+{application, gtime,
+ [{description, "Erlang library for time operations, RFC 3339 parsing, timezone conversion and duration arithmetic."},
+  {vsn, "0.9.1"},
+  {registered, []},
+  {applications, [kernel, stdlib]},
+  {env, []},
+  {modules, []},
+  {licenses, ["MIT"]},
+  {links, []}
+ ]}.
